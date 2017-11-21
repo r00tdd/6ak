@@ -1,5 +1,5 @@
 /*
- * aes-ce-cipher-core.c - core AES cipher using ARMv8 Crypto Extensions
+ * aes-ce-cipher.c - core AES cipher using ARMv8 Crypto Extensions
  *
  * Copyright (C) 2013 - 2014 Linaro Ltd <ard.biesheuvel@linaro.org>
  *
@@ -10,13 +10,26 @@
 
 #include <asm/neon.h>
 #include <crypto/aes.h>
+#include <linux/cpufeature.h>
 #include <linux/crypto.h>
+#include <linux/module.h>
 
 #include "aes-ce-setkey.h"
+
+MODULE_DESCRIPTION("Synchronous AES cipher using ARMv8 Crypto Extensions");
+MODULE_AUTHOR("Ard Biesheuvel <ard.biesheuvel@linaro.org>");
+MODULE_LICENSE("GPL v2");
 
 struct aes_block {
 	u8 b[AES_BLOCK_SIZE];
 };
+
+asmlinkage void __aes_ce_encrypt(u32 *rk, u8 *out, const u8 *in, int rounds);
+asmlinkage void __aes_ce_decrypt(u32 *rk, u8 *out, const u8 *in, int rounds);
+
+asmlinkage u32 __aes_ce_sub(u32 l);
+asmlinkage void __aes_ce_invert(struct aes_block *out,
+				const struct aes_block *in);
 
 static int num_rounds(struct crypto_aes_ctx *ctx)
 {
@@ -30,15 +43,30 @@ static int num_rounds(struct crypto_aes_ctx *ctx)
 	return 6 + ctx->key_length / 4;
 }
 
+extern void aes_cipher_encrypt(struct crypto_tfm *tfm, u8 dst[], u8 const src[]);
+extern void aes_cipher_decrypt(struct crypto_tfm *tfm, u8 dst[], u8 const src[]);
+
+#ifdef CONFIG_CFI_CLANG
+static inline void __cfi_aes_cipher_encrypt(struct crypto_tfm *tfm, u8 dst[], u8 const src[])
+{
+	aes_cipher_encrypt(tfm, dst, src);
+}
+
+static inline void __cfi_aes_cipher_decrypt(struct crypto_tfm *tfm, u8 dst[], u8 const src[])
+{
+	aes_cipher_decrypt(tfm, dst, src);
+}
+
+#define aes_cipher_encrypt __cfi_aes_cipher_encrypt
+#define aes_cipher_decrypt __cfi_aes_cipher_decrypt
+#endif
+
 void aes_cipher_encrypt(struct crypto_tfm *tfm, u8 dst[], u8 const src[])
 {
 	struct crypto_aes_ctx *ctx = crypto_tfm_ctx(tfm);
-	struct aes_block *out = (struct aes_block *)dst;
-	struct aes_block const *in = (struct aes_block *)src;
-	void *dummy0;
-	int dummy1;
 
 	kernel_neon_begin_partial(4);
+<<<<<<< HEAD:arch/arm64/crypto/aes-ce-cipher-core.c
 
 	__asm__("	ld1	{v0.16b}, %[in]			;"
 		"	ld1	{v1.16b}, [%[key]], #16		;"
@@ -72,18 +100,18 @@ void aes_cipher_encrypt(struct crypto_tfm *tfm, u8 dst[], u8 const src[])
 				"2"(num_rounds(ctx) - 2)
 	:	"cc");
 
+=======
+	__aes_ce_encrypt(ctx->key_enc, dst, src, num_rounds(ctx));
+>>>>>>> 5cabb09108de (BACKPORT: crypto: arm64/aes-ce-cipher - move assembler code to .S file):arch/arm64/crypto/aes-ce-glue.c
 	kernel_neon_end();
 }
 
 void aes_cipher_decrypt(struct crypto_tfm *tfm, u8 dst[], u8 const src[])
 {
 	struct crypto_aes_ctx *ctx = crypto_tfm_ctx(tfm);
-	struct aes_block *out = (struct aes_block *)dst;
-	struct aes_block const *in = (struct aes_block *)src;
-	void *dummy0;
-	int dummy1;
 
 	kernel_neon_begin_partial(4);
+<<<<<<< HEAD:arch/arm64/crypto/aes-ce-cipher-core.c
 
 	__asm__("	ld1	{v0.16b}, %[in]			;"
 		"	ld1	{v1.16b}, [%[key]], #16		;"
@@ -117,27 +145,10 @@ void aes_cipher_decrypt(struct crypto_tfm *tfm, u8 dst[], u8 const src[])
 				"2"(num_rounds(ctx) - 2)
 	:	"cc");
 
+=======
+	__aes_ce_decrypt(ctx->key_dec, dst, src, num_rounds(ctx));
+>>>>>>> 5cabb09108de (BACKPORT: crypto: arm64/aes-ce-cipher - move assembler code to .S file):arch/arm64/crypto/aes-ce-glue.c
 	kernel_neon_end();
-}
-
-/*
- * aes_sub() - use the aese instruction to perform the AES sbox substitution
- *             on each byte in 'input'
- */
-static u32 aes_sub(u32 input)
-{
-	u32 ret;
-
-	__asm__("dup	v1.4s, %w[in]		;"
-		"movi	v0.16b, #0		;"
-		"aese	v0.16b, v1.16b		;"
-		"umov	%w[out], v0.4s[0]	;"
-
-	:	[out]	"=r"(ret)
-	:	[in]	"r"(input)
-	:		"v0","v1");
-
-	return ret;
 }
 
 int ce_aes_expandkey(struct crypto_aes_ctx *ctx, const u8 *in_key,
@@ -167,12 +178,16 @@ int ce_aes_expandkey(struct crypto_aes_ctx *ctx, const u8 *in_key,
 		u32 *rki = ctx->key_enc + (i * kwords);
 		u32 *rko = rki + kwords;
 
+<<<<<<< HEAD:arch/arm64/crypto/aes-ce-cipher-core.c
 #ifndef CONFIG_CPU_BIG_ENDIAN
 		rko[0] = ror32(aes_sub(rki[kwords - 1]), 8) ^ rcon[i] ^ rki[0];
 #else
 		rko[0] = rol32(aes_sub(rki[kwords - 1]), 8) ^ (rcon[i] << 24) ^
 			 rki[0];
 #endif
+=======
+		rko[0] = ror32(__aes_ce_sub(rki[kwords - 1]), 8) ^ rcon[i] ^ rki[0];
+>>>>>>> 5cabb09108de (BACKPORT: crypto: arm64/aes-ce-cipher - move assembler code to .S file):arch/arm64/crypto/aes-ce-glue.c
 		rko[1] = rko[0] ^ rki[1];
 		rko[2] = rko[1] ^ rki[2];
 		rko[3] = rko[2] ^ rki[3];
@@ -185,7 +200,7 @@ int ce_aes_expandkey(struct crypto_aes_ctx *ctx, const u8 *in_key,
 		} else if (key_len == AES_KEYSIZE_256) {
 			if (i >= 6)
 				break;
-			rko[4] = aes_sub(rko[3]) ^ rki[4];
+			rko[4] = __aes_ce_sub(rko[3]) ^ rki[4];
 			rko[5] = rko[4] ^ rki[5];
 			rko[6] = rko[5] ^ rki[6];
 			rko[7] = rko[6] ^ rki[7];
@@ -204,6 +219,7 @@ int ce_aes_expandkey(struct crypto_aes_ctx *ctx, const u8 *in_key,
 
 	key_dec[0] = key_enc[j];
 	for (i = 1, j--; j > 0; i++, j--)
+<<<<<<< HEAD:arch/arm64/crypto/aes-ce-cipher-core.c
 		__asm__("ld1	{v0.16b}, %[in]		;"
 			"aesimc	v1.16b, v0.16b		;"
 			"st1	{v1.16b}, %[out]	;"
@@ -211,9 +227,57 @@ int ce_aes_expandkey(struct crypto_aes_ctx *ctx, const u8 *in_key,
 		:	[out]	"=Q"(key_dec[i])
 		:	[in]	"Q"(key_enc[j])
 		:		"v0","v1");
+=======
+		__aes_ce_invert(key_dec + i, key_enc + j);
+>>>>>>> 5cabb09108de (BACKPORT: crypto: arm64/aes-ce-cipher - move assembler code to .S file):arch/arm64/crypto/aes-ce-glue.c
 	key_dec[i] = key_enc[0];
 
 	kernel_neon_end();
 	return 0;
 }
 EXPORT_SYMBOL(ce_aes_expandkey);
+
+int ce_aes_setkey(struct crypto_tfm *tfm, const u8 *in_key,
+		  unsigned int key_len)
+{
+	struct crypto_aes_ctx *ctx = crypto_tfm_ctx(tfm);
+	int ret;
+
+	ret = ce_aes_expandkey(ctx, in_key, key_len);
+	if (!ret)
+		return 0;
+
+	tfm->crt_flags |= CRYPTO_TFM_RES_BAD_KEY_LEN;
+	return -EINVAL;
+}
+EXPORT_SYMBOL(ce_aes_setkey);
+
+static struct crypto_alg aes_alg = {
+	.cra_name		= "aes",
+	.cra_driver_name	= "aes-ce",
+	.cra_priority		= 250,
+	.cra_flags		= CRYPTO_ALG_TYPE_CIPHER,
+	.cra_blocksize		= AES_BLOCK_SIZE,
+	.cra_ctxsize		= sizeof(struct crypto_aes_ctx),
+	.cra_module		= THIS_MODULE,
+	.cra_cipher = {
+		.cia_min_keysize	= AES_MIN_KEY_SIZE,
+		.cia_max_keysize	= AES_MAX_KEY_SIZE,
+		.cia_setkey		= ce_aes_setkey,
+		.cia_encrypt		= aes_cipher_encrypt,
+		.cia_decrypt		= aes_cipher_decrypt
+	}
+};
+
+static int __init aes_mod_init(void)
+{
+	return crypto_register_alg(&aes_alg);
+}
+
+static void __exit aes_mod_exit(void)
+{
+	crypto_unregister_alg(&aes_alg);
+}
+
+module_cpu_feature_match(AES, aes_mod_init);
+module_exit(aes_mod_exit);
